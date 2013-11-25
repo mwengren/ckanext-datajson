@@ -12,9 +12,12 @@ URL_REGEX = re.compile(
         r'(?::\d+)?' # optional port
         r'(?:/?|[/?]\S+)$', re.IGNORECASE)
 
-ACCRUAL_PERIODICITY_VALUES = (None, "Annual", "Bimonthly", "Semiweekly", "Daily", "Biweekly", "Semiannual", "Biennial", "Triennial", "Three times a week", "Three times a month", "Continuously updated", "Monthly", "Quarterly", "Semimonthly", "Three times a year", "Weekly", "Completely irregular")
+ACCRUAL_PERIODICITY_VALUES = ("Annual", "Bimonthly", "Semiweekly", "Daily", "Biweekly", "Semiannual", "Biennial", "Triennial", "Three times a week", "Three times a month", "Continuously updated", "Monthly", "Quarterly", "Semimonthly", "Three times a year", "Weekly", "Completely irregular")
 
 LANGUAGE_REGEX = re.compile("^[A-Za-z]{2}([A-Za-z]{2})?$")
+
+COMMON_MIMETYPES = ("application/zip", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/csv", "application/xml", "application/rdf+xml", "application/json", "text/plain", "application/rss+xml")
+MIMETYPE_REGEX = re.compile("^(application|text)/([a-z\-\.\+]+)$")
 
 # load the OMB bureau codes on first load of this module
 import urllib, csv
@@ -23,7 +26,7 @@ for row in csv.DictReader(urllib.urlopen("https://raw.github.com/seanherron/OMB-
     omb_burueau_codes.add(row["OMB Agency Code"] + ":" + row["OMB Bureau Code"])
 
 # main function for validation
-def do_validation(doc, errors_array):
+def do_validation(doc, src_url, errors_array):
     errs = { }
     
     if type(doc) != list:
@@ -46,7 +49,7 @@ def do_validation(doc, errors_array):
                 
             # keyword
             if isinstance(item.get("keyword"), (str, unicode)):
-                add_error(errs, 5, "Update Your File!", "The keyword field used to be a string but now it must be an array.", dataset_name)
+                add_error(errs, 5, "Update Your File!", "The 'keyword' field used to be a string but now it must be an array.", dataset_name)
                 
             elif check_required_field(item, "keyword", list, dataset_name, errs):
                 for kw in item["keyword"]:
@@ -87,13 +90,13 @@ def do_validation(doc, errors_array):
                     add_error(errs, 5, "Invalid Required Field Value", "The dataset identifier \"%s\" is used more than once." % item["identifier"], dataset_name)
                 seen_identifiers.add(item["identifier"])
                 
-            # programOffice
-            if check_required_field(item, "programOffice", list, dataset_name, errs):
-                for s in item["programOffice"]:
+            # programCode
+            if check_required_field(item, "programCode", list, dataset_name, errs):
+                for s in item["programCode"]:
                     if not isinstance(s, (str, unicode)):
-                        add_error(errs, 5, "Invalid Required Field Value", "Each value in the programOffice array must be a string", dataset_name)
+                        add_error(errs, 5, "Invalid Required Field Value", "Each value in the programCode array must be a string", dataset_name)
                     elif len(s.strip()) == 0:
-                        add_error(errs, 5, "Invalid Required Field Value", "A value in the programOffice array was an empty string.", dataset_name)
+                        add_error(errs, 5, "Invalid Required Field Value", "A value in the programCode array was an empty string.", dataset_name)
                 
             # accessLevel
             if check_string_field(item, "accessLevel", 0, dataset_name, errs):
@@ -111,28 +114,43 @@ def do_validation(doc, errors_array):
             # accessURL & webService
             check_url_field(False, item, "accessURL", dataset_name, errs)
             check_url_field(False, item, "webService", dataset_name, errs)
-            if item.get("accessLevel") == "public" and item.get("accessURL") is None:
-                add_error(errs, 20, "Where's the Dataset?", "A public dataset is missing an accessURL.", dataset_name)
-            elif item.get("accessURL") is None and item.get("webService") is None:
-                add_error(errs, 20, "Where's the Dataset?", "A dataset has neither an accessURL nor a webService.", dataset_name)
-            
+            if item.get("accessLevel") == "public" and item.get("accessURL") is None and item.get("webService") is None:
+                add_error(errs, 20, "Where's the Dataset?", "A public dataset has neither an accessURL nor a webService.", dataset_name)
+
+            # the first entry should be an entry for the catalog itself
+            if i == 0 and item.get("accessURL") != src_url:
+                add_error(errs, 2, "File Format Issues", "The first entry in the data.json file should be for the data.json file itself. Its accessURL should match the URL \"%s\"." % src_url, dataset_name)
+
             # format
-            # TODO: MIME yes, but array?
-            if item.get("accessURL"):
-                check_string_field(item, "format", 1, dataset_name, errs)
-                
+            if isinstance(item.get("format"), (str, unicode)):
+                add_error(errs, 5, "Update Your File!", "The 'format' field used to be a string but now it must be an array.", dataset_name)
+            elif item.get("accessURL") is None:
+                pass # not required
+            elif check_required_field(item, "format", list, dataset_name, errs):
+                for s in item["format"]:
+                    if not isinstance(s, (str, unicode)):
+                        add_error(errs, 50, "Invalid Field Value", "Each value in the format array must be a string", dataset_name)
+                    elif len(s.strip()) == 0:
+                        add_error(errs, 50, "Invalid Field Value", "A value in the format array was an empty string.", dataset_name)
+                    else:
+                        check_mime_type(s, "format", dataset_name, errs)
+                            
             # license
-            if item.get("license") is not None and not isinstance(item.get("license"), (str, unicode)):
+            if item.get("license") is None:
+                add_error(errs, 75, "Check Required-If-Applicable Fields", "Add a 'license' field to datasets. This field is required-if-applicable.", dataset_name)
+            elif not isinstance(item.get("license"), (str, unicode)):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'license' must be a string value if specified.", dataset_name)
             
             # spatial
             # TODO: There are more requirements than it be a string.
-            if item.get("spatial") is not None and not isinstance(item.get("spatial"), (str, unicode)):
+            if item.get("spatial") is None:
+                add_error(errs, 75, "Check Required-If-Applicable Fields", "Add a 'spatial' field to datasets. This field is required if the dataset is spatial in nature.", dataset_name)
+            elif not isinstance(item.get("spatial"), (str, unicode)):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'spatial' must be a string value if specified.", dataset_name)
                 
             # temporal
             if item.get("temporal") is None:
-                pass # not required
+                add_error(errs, 75, "Check Required-If-Applicable Fields", "Add a 'temporal' field to datasets. This field is required if the dataset is temporal in nature.", dataset_name)
             elif not isinstance(item["temporal"], (str, unicode)):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'temporal' must be a string value if specified.", dataset_name)
             elif "/" not in item["temporal"]:
@@ -146,7 +164,7 @@ def do_validation(doc, errors_array):
             
             # theme
             if item.get("theme") is None:
-                pass # not required
+                add_error(errs, 90, "Add Suggested Fields to Improve Data Quality", "Add a 'theme' field to datasets.", dataset_name)
             elif not isinstance(item["theme"], list):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'theme' must be an array.", dataset_name)
             else:
@@ -157,36 +175,45 @@ def do_validation(doc, errors_array):
                         add_error(errs, 50, "Invalid Field Value (Optional Fields)", "A value in the theme array was an empty string.", dataset_name)
             
             # dataDictionary
-            check_url_field(False, item, "dataDictionary", dataset_name, errs)
+            if check_url_field(False, item, "dataDictionary", dataset_name, errs):
+                if item.get("dataDictionary") is None:
+                    add_error(errs, 120, "Add Other Optional Fields (Suggested)", "Add a 'dataDictionary' field to datasets.", dataset_name)
             
             # dataQuality
             if item.get("dataQuality") is None:
-                pass # not required
+                add_error(errs, 120, "Add Other Optional Fields (Suggested)", "Add a 'dataQuality' field to datasets.", dataset_name)
             elif not isinstance(item["dataQuality"], bool):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'theme' must be true or false, as a JSON boolean literal (not the string \"true\" or \"false\").", dataset_name)
                 
             # distribution
             if item.get("distribution") is None:
-                pass # not required
+                pass # not required, and missing just means there's only one access URL and it's in the accessURL field
             elif not isinstance(item["distribution"], list):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'distribution' must be an array, if present.", dataset_name)
             else:
+                if len(item["distribution"]) > 0 and item.get("accessURL") is None:
+                    add_error(errs, 10, "Missing Required Fields", "The 'accessURL' field is missing on a dataset with one or more distributions.", dataset_name)
+                    
                 for j, d in enumerate(item["distribution"]):
                     resource_name = dataset_name + (" distribution %d" % (j+1))
-                    check_url_field(True, d, "accessURL", resource_name, errs)
-                    check_string_field(d, "format", 1, resource_name, errs)
-                    # TODO: Check that it's a MIME type.
+                    check_url_field(True, d, "distribution accessURL", resource_name, errs)
+                    if check_string_field(d, "format", 1, resource_name, errs):
+                        check_mime_type(d["format"], "distribution format", resource_name, errs)
                 
             # accrualPeriodicity
-            if item.get("accrualPeriodicity") not in ACCRUAL_PERIODICITY_VALUES:
+            if item.get("accrualPeriodicity") is None:
+                add_error(errs, 90, "Add Suggested Fields to Improve Data Quality", "Add a 'accrualPeriodicity' field to datasets.", dataset_name)
+            elif item.get("accrualPeriodicity") not in ACCRUAL_PERIODICITY_VALUES:
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'accrualPeriodicity' had an invalid value.", dataset_name)
             
             # landingPage
-            check_url_field(False, item, "landingPage", dataset_name, errs)
+            if check_url_field(False, item, "landingPage", dataset_name, errs):
+                if item.get("landingPage") is None:
+                    add_error(errs, 90, "Add Suggested Fields to Improve Data Quality", "Add a 'landingPage' field to datasets.", dataset_name)
             
             # language
             if item.get("language") is None:
-                pass # not required
+                add_error(errs, 120, "Add Other Optional Fields (Suggested)", "Add a 'language' field to datasets.", dataset_name)
             elif not isinstance(item["language"], list):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'language' must be an array, if present.", dataset_name)
             else:
@@ -196,13 +223,13 @@ def do_validation(doc, errors_array):
                     
             # PrimaryITInvestmentUII
             if item.get("PrimaryITInvestmentUII") is None:
-                pass # not required
+                add_error(errs, 120, "Add Other Optional Fields (Suggested)", "Add a 'PrimaryITInvestmentUII' field to datasets.", dataset_name)
             elif not isinstance(item["PrimaryITInvestmentUII"], (str, unicode)):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'PrimaryITInvestmentUII' must be a string, if present.", dataset_name)
                 
             # references
             if item.get("references") is None:
-                pass # not required
+                add_error(errs, 120, "Add Other Optional Fields (Suggested)", "Add a 'references' field to datasets.", dataset_name)
             elif not isinstance(item["references"], list):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'references' must be an array, if present.", dataset_name)
             else:
@@ -211,7 +238,9 @@ def do_validation(doc, errors_array):
                         add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'references' had an invalid URL: \"%s\"" % s, dataset_name)
             
             # issued
-            if item.get("issued") is not None:
+            if item.get("issued") is None:
+                add_error(errs, 90, "Add Suggested Fields to Improve Data Quality", "Add a 'issued' field to datasets.", dataset_name)
+            else:
                 check_date_field(item, "issued", dataset_name, errs)
             
             # systemOfRecords
@@ -231,25 +260,26 @@ def add_error(errs, severity, heading, description, context=None):
 
 def nice_type_name(data_type):
     if data_type == (str, unicode) or data_type in (str, unicode):
-        return "string"
+        return "a string"
     elif data_type == list:
-        return "array"
+        return "an array"
     else:
-        return str(data_type)
+        return "a " + str(data_type)
 
-def check_required_field(obj, field_name, data_type, dataset_name, errs):
+def check_required_field(obj, field_name, data_type, dataset_name, errs, display_field_name=None):
     # checks that a field exists and has the right type
+    if not display_field_name: display_field_name = field_name
     if field_name not in obj:
-        add_error(errs, 10, "Missing Required Fields", "The '%s' field is missing." % field_name, dataset_name)
+        add_error(errs, 10, "Missing Required Fields", "The '%s' field is missing." % display_field_name, dataset_name)
         return False
     elif obj[field_name] is None:
-        add_error(errs, 10, "Missing Required Fields", "The '%s' field is set to null." % field_name, dataset_name)
+        add_error(errs, 10, "Missing Required Fields", "The '%s' field is set to null." % display_field_name, dataset_name)
         return False
     elif not isinstance(obj[field_name], data_type):
-        add_error(errs, 5, "Invalid Required Field Value", "The '%s' field must be a %s but it has a different datatype (%s)." % (field_name, nice_type_name(data_type), nice_type_name(type(obj[field_name]))), dataset_name)
+        add_error(errs, 5, "Invalid Required Field Value", "The '%s' field must be %s but it is %s." % (display_field_name, nice_type_name(data_type), nice_type_name(type(obj[field_name]))), dataset_name)
         return False
     elif isinstance(obj[field_name], list) and len(obj[field_name]) == 0:
-        add_error(errs, 10, "Missing Required Fields", "The '%s' field is an empty array." % field_name, dataset_name)
+        add_error(errs, 10, "Missing Required Fields", "The '%s' field is an empty array." % display_field_name, dataset_name)
         return False
     return True
 
@@ -280,11 +310,22 @@ def check_date_field(obj, field_name, dataset_name, errs):
     
 def check_url_field(required, obj, field_name, dataset_name, errs):
     # checks that a required or optional field, if specified, looks like a URL
+    
+    display_field_name = field_name
+    field_name = field_name.split(" ")[-1] # turn 'distribution accessURL' into 'accessURL', leave other field names unchanged
+    
     if not required and (field_name not in obj or obj[field_name] is None): return True # not required, so OK
-    if not check_required_field(obj, field_name, (str, unicode), dataset_name, errs): return False # just checking data type
+    if not check_required_field(obj, field_name, (str, unicode), dataset_name, errs, display_field_name=display_field_name): return False # for a non-required field, just checking data type
     if not URL_REGEX.match(obj[field_name]):
-        add_error(errs, 5, "Invalid Required Field Value", "The '%s' field has an invalid URL: \"%s\"." % (field_name, obj[field_name]), dataset_name)
+        add_error(errs, 5, "Invalid Required Field Value", "The '%s' field has an invalid URL: \"%s\"." % (display_field_name, obj[field_name]), dataset_name)
         return False
     return True
 
-
+def check_mime_type(format, field_name, dataset_name, errs):
+    if format.lower() in ("csv", "xls", "xml", "rdf", "json", "xlsx", "text", "api", "feed"):
+        add_error(errs, 5, "Update Your File!", "The '%s' field used to be a file extension but now it must be a MIME type." % field_name, dataset_name)
+    elif not MIMETYPE_REGEX.match(format):
+        add_error(errs, 5, "Invalid Required Field Value", "The '%s' field has an invalid MIME type: \"%s\"." % (field_name, format), dataset_name)
+    elif format not in COMMON_MIMETYPES:
+        add_error(errs, 100, "Are These Okay?", "The '%s' field has an unusual MIME type: \"%s\"" % (field_name, format), dataset_name)
+        

@@ -2,7 +2,6 @@ import ckan.plugins as p
 
 from ckan.lib.base import BaseController, render, c
 from pylons import request, response
-from ckan.common import request as ckan_request
 import json, re
 
 try:
@@ -12,13 +11,15 @@ except ImportError:
 
 import ckan.model
 
-from build_datajson import make_datajson_entry
-# from build_enterprisedatajson import make_enterprisedatajson_entry
+from build_datajson import make_datajson_entry, get_facet_fields
 from build_datajsonld import dataset_to_jsonld
 
 class DataJsonPlugin(p.SingletonPlugin):
     p.implements(p.interfaces.IConfigurer)
     p.implements(p.interfaces.IRoutes, inherit=True)
+    p.implements(p.interfaces.IFacets)
+
+    # IConfigurer
     
     def update_config(self, config):
     	# Must use IConfigurer rather than IConfigurable because only IConfigurer
@@ -37,6 +38,8 @@ class DataJsonPlugin(p.SingletonPlugin):
         # Adds our local templates directory. It's smart. It knows it's
         # relative to the path of *this* file. Wow.
         p.toolkit.add_template_directory(config, "templates")
+
+    # IRoutes
 
     def before_map(self, m):
         return m
@@ -60,8 +63,21 @@ class DataJsonPlugin(p.SingletonPlugin):
 
         # /pod/validate
         m.connect('datajsonvalidator', "/pod/validate", controller='ckanext.datajson.plugin:DataJsonController', action='validator')
+
+        # /pod/data-listing
+        m.connect('datajsonhtml', "/pod/data-catalog", controller='ckanext.datajson.plugin:DataJsonController', action='show_html_rendition')
         
         return m
+
+    # IFacets
+    
+    def dataset_facets(self, facets, package_type):
+        # Add any facets specified in build_datajson.get_facet_fields() to the top
+        # of the facet list, and then put the CKAN default facets below that.
+        f = OrderedDict()
+        f.update(get_facet_fields())
+        f.update(facets)
+        return f
 
 class DataJsonController(BaseController):
     def generate_output(self, format):
@@ -84,6 +100,7 @@ class DataJsonController(BaseController):
                     ("dcterms", "http://purl.org/dc/terms/"),
                     ("dcat", "http://www.w3.org/ns/dcat#"),
                     ("foaf", "http://xmlns.com/foaf/0.1/"),
+                    ("pod", "http://project-open-data.github.io/schema/2013-09-20_1.0#"),
                     ])
                 ),
                 ("@id", DataJsonPlugin.ld_id),
@@ -94,7 +111,7 @@ class DataJsonController(BaseController):
                 ("dcat:dataset", [dataset_to_jsonld(d) for d in data]),
             ])
             
-        return p.toolkit.literal(json.dumps(data))
+        return p.toolkit.literal(json.dumps(data, indent=2))
 
     def generate_json(self):
         return self.generate_output('json')
@@ -126,7 +143,7 @@ class DataJsonController(BaseController):
                 
             if body:
                 try:
-                    do_validation(body, c.errors)
+                    do_validation(body, c.source_url, c.errors)
                 except Exception as e:
                     c.errors.append(("Internal Error", ["Something bad happened: " + unicode(e)]))
                 if len(c.errors) == 0:
@@ -134,67 +151,23 @@ class DataJsonController(BaseController):
             
         return render('datajsonvalidator.html')
 
-    def generate_pdl(self):
-        # DWC this is a hack, as I couldn't get to the request parameters. For whatever reason, the multidict was always empty
-        match = re.match(r"/organization/([-a-z0-9]+)/data.json", request.path)
-        if match:
-            # set content type (charset required or pylons throws an error)
-            response.content_type = 'application/json; charset=UTF-8'
+    def show_html_rendition(self):
+        # Shows an HTML rendition of the data.json file. Requests the file live
+        # from http://localhost/data.json.
+            
+        import urllib, json
+        try:
+            c.catalog_data = json.load(urllib.urlopen("http://localhost/data.json"))
+        except:
+            c.catalog_data = []
+                
+        c.catalog_data.sort(key = lambda x : x.get("modified"), reverse=True)
 
-            # allow caching of response (e.g. by Apache)
-            del response.headers["Cache-Control"]
-            del response.headers["Pragma"]
-            return make_pdl(match.group(1))
-        return "Invalid organization id"
-
-    def generate_edi(self):
-        # DWC this is a hack, as I couldn't get to the request parameters. For whatever reason, the multidict was always empty
-        match = re.match(r"/organization/([-a-z0-9]+)/edi.json", request.path)
-        if match:
-            # set content type (charset required or pylons throws an error)
-            response.content_type = 'application/json; charset=UTF-8'
-
-            # allow caching of response (e.g. by Apache)
-            del response.headers["Cache-Control"]
-            del response.headers["Pragma"]
-            return make_edi(match.group(1))
-        return "Invalid organization id"
+        return render('html_rendition.html')
 
 def make_json():
     # Build the data.json file.
     packages = p.toolkit.get_action("current_package_list_with_resources")(None, {})
-    output = []
-    #Create data.json only using public and public-restricted datasets, datasets marked non-public are not exposed
-    for pkg in packages:
-        extras = dict([(x['key'], x['value']) for x in pkg['extras']])
-        if not (re.match(r'[Nn]on-public', extras['public_access_level'])):
-            output.append(make_datajson_entry(pkg));
-    return output
-
-def make_edi(owner_org):
-    # Build the data.json file.
-    packages = p.toolkit.get_action("current_package_list_with_resources")(None, {})
-    output = []
-    for pkg in packages:
-        if pkg['owner_org']==owner_org:
-            output.append(make_datajson_entry(pkg));
-    return json.dumps(output)
-
-def make_pdl(owner_org):
-    # Build the data.json file.
-    packages = p.toolkit.get_action("current_package_list_with_resources")(None, {})
-    output = []
-    #Create data.json only using public datasets, datasets marked non-public are not exposed
-    for pkg in packages:
-        extras = dict([(x['key'], x['value']) for x in pkg['extras']])
-        if pkg['owner_org']==owner_org and not (re.match(r'[Nn]on-public', extras['public_access_level'])):
-            output.append(make_datajson_entry(pkg));
-    return json.dumps(output)
-
-# TODO commenting out enterprise data inventory for right now
-#def make_enterprise_json():
-#    # Build the enterprise data.json file, which includes private files
-#    packages = p.toolkit.get_action("current_package_list_with_resources")(None, {})
-#    return [make_enterprisedatajson_entry(pkg) for pkg in packages]
+    return [make_datajson_entry(pkg) for pkg in packages if pkg["type"] == "dataset"]
     
 
