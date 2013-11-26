@@ -1,7 +1,11 @@
+from logging import getLogger
 try:
     from collections import OrderedDict # 2.7
 except ImportError:
     from sqlalchemy.util import OrderedDict
+
+#log = getLogger(__name__)
+log = getLogger("datajson.build_datajson")
 
 def get_facet_fields():
     # Return fields that we'd like to add to default CKAN faceting. This really has
@@ -12,6 +16,8 @@ def get_facet_fields():
     return facets
 
 def make_datajson_entry(package):
+    log.debug("OrderedDict class name: %s".format(OrderedDict.__name__))
+    
     return OrderedDict([
         ("title", package["title"]),
         ("description", package["notes"]),
@@ -21,7 +27,7 @@ def make_datajson_entry(package):
         ("bureauCode", extra(package, "Bureau Code").split(" ") if extra(package, "Bureau Code") else None),
         ("programCode", extra(package, "Program Code").split(" ") if extra(package, "Program Code") else None),
         ("contactPoint", extra(package, "Contact Name")),
-        ("mbox", extra(package, "Contact Email")),
+        ("mbox", extra(package, "contact-email")),
         ("identifier", package["id"]),
         ("accessLevel", extra(package, "Access Level", default="public")),
         ("accessLevelComment", extra(package, "Access Level Comment")),

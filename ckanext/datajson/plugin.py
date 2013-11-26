@@ -14,6 +14,10 @@ import ckan.model
 from build_datajson import make_datajson_entry, get_facet_fields
 from build_datajsonld import dataset_to_jsonld
 
+from logging import getLogger
+log = getLogger("datajson.plugin")
+
+
 class DataJsonPlugin(p.SingletonPlugin):
     p.implements(p.interfaces.IConfigurer)
     p.implements(p.interfaces.IRoutes, inherit=True)
@@ -22,6 +26,7 @@ class DataJsonPlugin(p.SingletonPlugin):
     # IConfigurer
     
     def update_config(self, config):
+        log.debug("Executing the update_config function....")
     	# Must use IConfigurer rather than IConfigurable because only IConfigurer
     	# is called before after_map, in which we need the configuration directives
     	# to know how to set the paths.
@@ -81,6 +86,7 @@ class DataJsonPlugin(p.SingletonPlugin):
 
 class DataJsonController(BaseController):
     def generate_output(self, format):
+        log.debug("Executing the generate_output function....")
         # set content type (charset required or pylons throws an error)
         response.content_type = 'application/json; charset=UTF-8'
         
@@ -166,6 +172,7 @@ class DataJsonController(BaseController):
         return render('html_rendition.html')
 
 def make_json():
+    log.debug("Executing the make_json function....")
     # Build the data.json file.
     packages = p.toolkit.get_action("current_package_list_with_resources")(None, {})
     return [make_datajson_entry(pkg) for pkg in packages if pkg["type"] == "dataset"]
