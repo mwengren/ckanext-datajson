@@ -4,6 +4,7 @@ try:
 except ImportError:
     from sqlalchemy.util import OrderedDict
 
+import json
 #log = getLogger(__name__)
 log = getLogger("datajson.build_datajson")
 
@@ -63,8 +64,13 @@ def make_datajson_entry(package):
 def extra(package, key, default=None):
     # Retrieves the value of an extras field.
     for extra in package["extras"]:
-        if extra["key"] == key:
-            return extra["value"]
+        if extra["key"] == "extras_rollup":
+            extras_rollup_dict = extra["value"]
+            #return(extras_rollup_dict) #returns full json-formatted 'value' field of extras_rollup
+            extras_rollup_dict = json.loads(extra["value"])
+            for rollup_key in extras_rollup_dict.keys():
+                if rollup_key == key: return extras_rollup_dict.get(rollup_key)
+        
     return default
 
 def get_best_resource(package, acceptable_formats, unacceptable_formats=None):
