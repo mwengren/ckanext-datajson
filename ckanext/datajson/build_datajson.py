@@ -4,9 +4,11 @@ try:
 except ImportError:
     from sqlalchemy.util import OrderedDict
 
+import ckan.lib.helpers as h
+
 import json
-#log = getLogger(__name__)
-log = getLogger("datajson.build_datajson")
+log = getLogger(__name__)
+#log = getLogger("datajson.build_datajson")
 
 def get_facet_fields():
     # Return fields that we'd like to add to default CKAN faceting. This really has
@@ -17,17 +19,35 @@ def get_facet_fields():
     return facets
 
 def make_datajson_entry(package):
-    log.debug("OrderedDict class name: %s".format(OrderedDict.__name__))
+    log.info("OrderedDict class name: %s".format(OrderedDict.__name__))
     
     return OrderedDict([
         ("title", package["title"]),
         ("description", package["notes"]),
-        ("keyword", [t["display_name"] for t in package["tags"]]),
-        ("modified", extra(package, "Date Updated")),
-        ("publisher", package["author"]),
-        ("bureauCode", extra(package, "Bureau Code").split(" ") if extra(package, "Bureau Code") else None),
+        #("keyword", [t["display_name"] for t in package["tags"]]),
+        #("keyword", [t for t in package["extras"]["tags"].split(",")]),
+        ("keyword", tags(package)),
+        #("modified", extra(package, "Date Updated")),
+        ("modified", extra(package, "metadata-date")),
+        #("publisher", package["author"]),
+        #("publisher", json.loads(extra(package, "responsible-party")[0]).get("name")),
+        #("publisher", extra(package, "responsible-party")),
+        #("publisher", type(extra(package, "responsible-party"))),
+        #("publisher", json.loads(extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")).get("name")),
+        #("publisher", extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")),
+        ("publisher", extra(package, "Responsible Party")),
+        
+        #("bureauCode", extra(package, "Bureau Code").split(" ") if extra(package, "Bureau Code") else None),
+        ("bureauCode", bureau_code(package)),
         ("programCode", extra(package, "Program Code").split(" ") if extra(package, "Program Code") else None),
+        #("contactPoint", extra(package, "Contact Name")),
+        #("contactPoint", json.loads(extra(package, "responsible-party")[0]).get("name")),
+        #("contactPoint", extra(package, "responsible-party")),
+        #("contactPoint", type(extra(package, "responsible-party"))),
+        #("contactPoint", json.loads(extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")).get("name")),
+        #("contactPoint", extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")),
         ("contactPoint", extra(package, "Contact Name")),
+        
         ("mbox", extra(package, "contact-email")),
         ("identifier", package["id"]),
         ("accessLevel", extra(package, "Access Level", default="public")),
@@ -54,7 +74,7 @@ def make_datajson_entry(package):
                 OrderedDict([
                    ("identifier", r["id"]), # NOT in POD standard, but useful for conversion to JSON-LD
                    ("accessURL", r["url"]),
-                   ("format", r.get("mimetype", extension_to_mime_type(r["format"]))),
+                   ("format", extension_to_mime_type(r["format"])),
                 ])
                 for r in package["resources"]
                 if r["format"].lower() not in ("api", "query tool", "widget")
@@ -63,6 +83,7 @@ def make_datajson_entry(package):
     
 def extra(package, key, default=None):
     # Retrieves the value of an extras field.
+    '''
     for extra in package["extras"]:
         if extra["key"] == "extras_rollup":
             extras_rollup_dict = extra["value"]
@@ -71,6 +92,52 @@ def extra(package, key, default=None):
             for rollup_key in extras_rollup_dict.keys():
                 if rollup_key == key: return extras_rollup_dict.get(rollup_key)
         
+    return default
+    '''
+    
+    current_extras = package["extras"]
+    #new_extras =[]
+    new_extras = {}
+    for extra in current_extras:
+        if extra['key'] == 'extras_rollup':
+            rolledup_extras = json.loads(extra['value'])
+            for k, value in rolledup_extras.iteritems():
+                log.info("rolledup_extras key: %s, value: %s", k, value)
+                #new_extras.append({"key": k, "value": value})
+                new_extras[k] = value
+        #else:
+        #    new_extras.append(extra)
+    
+    #decode keys:
+    output = []
+    #for k, v in new_extras:
+    for k, v in new_extras.iteritems():
+        k = k.replace('_', ' ').replace('-', ' ').title()
+        if isinstance(v, (list, tuple)):
+            v = ", ".join(map(unicode, v))
+        log.info("decoded values key: %s, value: %s", k, v)
+        if k == key:
+            return v
+    return default
+    
+    #extras = h.sorted_extras(new_extras)
+    #for k, v in extras.iteritems():
+    #    if k == key return: v
+    #for extra in extras:
+    #    if extra.get()
+    #return default
+
+def tags(package, default=None):
+    # Retrieves the value of an extras field.
+    for extra in package["extras"]:
+        if extra["key"] == "tags":
+            keywords = extra["value"].split(",")
+            return keywords
+
+def bureau_code(package, default=None):
+    codelist = json.load("resources/omb-agency-bureau-treasury-codes.json")
+    for bureau in codelist:
+        if bureau['Agency'] == package["organization"]["title"]: return bureau["OMB Bureau Code"]
     return default
 
 def get_best_resource(package, acceptable_formats, unacceptable_formats=None):
@@ -88,7 +155,7 @@ def get_best_resource(package, acceptable_formats, unacceptable_formats=None):
 
 def get_primary_resource(package):
     # Return info about a "primary" resource. Select a good one.
-    return get_best_resource(package, ("csv", "xls", "xml", "text", "zip", "rdf"), ("api", "query tool", "widget"))
+    return get_best_resource(package, ("csv", "xls", "xml", "text", "zip", "rdf", "text/html"), ("api", "query tool", "widget"))
     
 def get_api_resource(package):
     # Return info about an API resource.
@@ -120,6 +187,10 @@ def extension_to_mime_type(file_ext):
         "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "text": "text/plain",
         "feed": "application/rss+xml",
+        "arcgis_rest": "text/html",
+        "wms": "text/html",
+        "text/html": "text/html",
+        "application/pdf": "application/pdf",
     }
     return ext.get(file_ext.lower(), "application/unknown")
     
