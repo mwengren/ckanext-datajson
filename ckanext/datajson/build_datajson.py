@@ -4,9 +4,11 @@ try:
 except ImportError:
     from sqlalchemy.util import OrderedDict
 
-import ckan.lib.helpers as h
-
+from  ckan.lib import helpers as h
+from  ckanext.spatial.helpers import get_responsible_party, get_reference_date
+import os
 import json
+
 log = getLogger(__name__)
 #log = getLogger("datajson.build_datajson")
 
@@ -28,14 +30,14 @@ def make_datajson_entry(package):
         #("keyword", [t for t in package["extras"]["tags"].split(",")]),
         ("keyword", tags(package)),
         #("modified", extra(package, "Date Updated")),
-        ("modified", extra(package, "metadata-date")),
+        ("modified", extra(package, "Metadata Date")),
         #("publisher", package["author"]),
         #("publisher", json.loads(extra(package, "responsible-party")[0]).get("name")),
         #("publisher", extra(package, "responsible-party")),
         #("publisher", type(extra(package, "responsible-party"))),
         #("publisher", json.loads(extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")).get("name")),
         #("publisher", extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")),
-        ("publisher", extra(package, "Responsible Party")),
+        ("publisher", get_responsible_party(extra(package, "Responsible Party"))),
         
         #("bureauCode", extra(package, "Bureau Code").split(" ") if extra(package, "Bureau Code") else None),
         ("bureauCode", bureau_code(package)),
@@ -46,9 +48,9 @@ def make_datajson_entry(package):
         #("contactPoint", type(extra(package, "responsible-party"))),
         #("contactPoint", json.loads(extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")).get("name")),
         #("contactPoint", extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")),
-        ("contactPoint", extra(package, "Contact Name")),
+        ("contactPoint", extra(package, "Contact Name") if not None else get_responsible_party(extra(package, "Responsible Party"))),
         
-        ("mbox", extra(package, "contact-email")),
+        ("mbox", extra(package, "Contact Email")),
         ("identifier", package["id"]),
         ("accessLevel", extra(package, "Access Level", default="public")),
         ("accessLevelComment", extra(package, "Access Level Comment")),
@@ -56,11 +58,11 @@ def make_datajson_entry(package):
         ("accessURL", get_primary_resource(package).get("url", None)),
         ("webService", get_api_resource(package).get("url", None)),
         ("format", [ extension_to_mime_type(get_primary_resource(package).get("format", None)) ]),
-        ("license", extra(package, "License Agreement")),
-        ("spatial", extra(package, "Geographic Scope")),
+        ("license", extra(package, "License")),
+        ("spatial", extra(package, "Spatial")),
         ("temporal", build_temporal(package)),
-        ("issued", extra(package, "Date Released")),
-        ("accrualPeriodicity", extra(package, "Publish Frequency")),
+        ("issued", get_reference_date(extra(package, "Dataset Reference Date"))),
+        ("accrualPeriodicity", extra(package, "Frequency Of Update")),
         ("language", extra(package, "Language")),
         ("PrimaryITInvestmentUII", extra(package, "PrimaryITInvestmentUII")),
         ("granularity", "/".join(x for x in [extra(package, "Unit of Analysis"), extra(package, "Geographic Granularity")] if x != None)),
@@ -109,8 +111,6 @@ def extra(package, key, default=None):
         #    new_extras.append(extra)
     
     #decode keys:
-    output = []
-    #for k, v in new_extras:
     for k, v in new_extras.iteritems():
         k = k.replace('_', ' ').replace('-', ' ').title()
         if isinstance(v, (list, tuple)):
@@ -119,13 +119,6 @@ def extra(package, key, default=None):
         if k == key:
             return v
     return default
-    
-    #extras = h.sorted_extras(new_extras)
-    #for k, v in extras.iteritems():
-    #    if k == key return: v
-    #for extra in extras:
-    #    if extra.get()
-    #return default
 
 def tags(package, default=None):
     # Retrieves the value of an extras field.
@@ -135,9 +128,10 @@ def tags(package, default=None):
             return keywords
 
 def bureau_code(package, default=None):
-    codelist = json.load("resources/omb-agency-bureau-treasury-codes.json")
+    file = open(os.path.join(os.path.dirname(__file__),"resources") + "/omb-agency-bureau-treasury-codes.json", 'r');
+    codelist = json.load(file)
     for bureau in codelist:
-        if bureau['Agency'] == package["organization"]["title"]: return bureau["OMB Bureau Code"]
+        if bureau['Agency'] == package["organization"]["title"]: return "{0}:{1}".format(bureau["OMB Agency Code"], bureau["OMB Bureau Code"])
     return default
 
 def get_best_resource(package, acceptable_formats, unacceptable_formats=None):
@@ -164,13 +158,13 @@ def get_api_resource(package):
 def build_temporal(package):
     # Build one dataset entry of the data.json file.
     temporal = ""
-    if extra(package, "Coverage Period Fiscal Year Start"):
-        temporal = "FY" + extra(package, "Coverage Period Fiscal Year Start").replace(" ", "T").replace("T00:00:00", "")
+    if extra(package, "Temporal Extent Begin"):
+        temporal = extra(package, "Temporal Extent Begin").replace(" ", "T").replace("T00:00:00", "")
     else:
         temporal = extra(package, "Coverage Period Start", "Unknown").replace(" ", "T").replace("T00:00:00", "")
     temporal += "/"
-    if extra(package, "Coverage Period Fiscal Year End"):
-        temporal += "FY" + extra(package, "Coverage Period Fiscal Year End").replace(" ", "T").replace("T00:00:00", "")
+    if extra(package, "Temporal Extent End"):
+        temporal += extra(package, "Temporal Extent End").replace(" ", "T").replace("T00:00:00", "")
     else:
         temporal += extra(package, "Coverage Period End", "Unknown").replace(" ", "T").replace("T00:00:00", "")
     if temporal == "Unknown/Unknown": return None
@@ -189,7 +183,7 @@ def extension_to_mime_type(file_ext):
         "feed": "application/rss+xml",
         "arcgis_rest": "text/html",
         "wms": "text/html",
-        "text/html": "text/html",
+        "html": "text/html",
         "application/pdf": "application/pdf",
     }
     return ext.get(file_ext.lower(), "application/unknown")
