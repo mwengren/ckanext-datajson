@@ -48,7 +48,7 @@ def make_datajson_entry(package):
         #("contactPoint", type(extra(package, "responsible-party"))),
         #("contactPoint", json.loads(extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")).get("name")),
         #("contactPoint", extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")),
-        ("contactPoint", extra(package, "Contact Name") if not None else get_responsible_party(extra(package, "Responsible Party"))),
+        ("contactPoint", contact_point(package)),
         
         ("mbox", extra(package, "Contact Email")),
         ("identifier", package["id"]),
@@ -58,7 +58,7 @@ def make_datajson_entry(package):
         ("accessURL", get_primary_resource(package).get("url", None)),
         ("webService", get_api_resource(package).get("url", None)),
         ("format", [ extension_to_mime_type(get_primary_resource(package).get("format", None)) ]),
-        ("license", extra(package, "License")),
+        ("license", extra(package, "Licence")),
         ("spatial", extra(package, "Spatial")),
         ("temporal", build_temporal(package)),
         ("issued", get_reference_date(extra(package, "Dataset Reference Date"))),
@@ -131,8 +131,14 @@ def bureau_code(package, default=None):
     file = open(os.path.join(os.path.dirname(__file__),"resources") + "/omb-agency-bureau-treasury-codes.json", 'r');
     codelist = json.load(file)
     for bureau in codelist:
-        if bureau['Agency'] == package["organization"]["title"]: return "{0}:{1}".format(bureau["OMB Agency Code"], bureau["OMB Bureau Code"])
+        if bureau['Agency'] == package["organization"]["title"]: return "[{0}:{1}]".format(bureau["OMB Agency Code"], bureau["OMB Bureau Code"])
     return default
+
+def contact_point(package, default=None):
+    if extra(package, "Contact Name") is not None: return extra(package, "Contact Name")
+    elif get_responsible_party(extra(package, "Responsible Party")) is not None: return get_responsible_party(extra(package, "Responsible Party"))
+    else: return default
+
 
 def get_best_resource(package, acceptable_formats, unacceptable_formats=None):
     resources = list(r for r in package["resources"] if r["format"].lower() in acceptable_formats)
