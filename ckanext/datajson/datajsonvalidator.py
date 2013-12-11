@@ -112,7 +112,15 @@ def do_validation(doc, src_url, errors_array):
                 check_string_field(item, "accessLevelComment", 10, dataset_name, errs)
             
             # accessURL & webService
-            check_url_field(False, item, "accessURL", dataset_name, errs)
+            if check_url_field(False, item, "accessURL", dataset_name, errs):
+                if item.get("accessURL") and isinstance(item.get("distribution"), list):
+                    # If accessURL and distribution are both given, the accessURL must be one of the distributions.
+                    for d in item["distribution"]:
+                        if d.get("accessURL") == item.get("accessURL"):
+                            break # found
+                    else: # not found
+                        add_error(errs, 20, "Where's the Dataset?", "If a top-level 'accessURL' and 'distribution' are both present, the accessURL must be one of the distributions.", dataset_name)
+
             check_url_field(False, item, "webService", dataset_name, errs)
             if item.get("accessLevel") == "public" and item.get("accessURL") is None and item.get("webService") is None:
                 add_error(errs, 20, "Where's the Dataset?", "A public dataset has neither an accessURL nor a webService.", dataset_name)
@@ -122,18 +130,11 @@ def do_validation(doc, src_url, errors_array):
                 add_error(errs, 2, "File Format Issues", "The first entry in the data.json file should be for the data.json file itself. Its accessURL should match the URL \"%s\"." % src_url, dataset_name)
 
             # format
-            if isinstance(item.get("format"), (str, unicode)):
-                add_error(errs, 5, "Update Your File!", "The 'format' field used to be a string but now it must be an array.", dataset_name)
-            elif item.get("accessURL") is None:
-                pass # not required
-            elif check_required_field(item, "format", list, dataset_name, errs):
-                for s in item["format"]:
-                    if not isinstance(s, (str, unicode)):
-                        add_error(errs, 50, "Invalid Field Value", "Each value in the format array must be a string", dataset_name)
-                    elif len(s.strip()) == 0:
-                        add_error(errs, 50, "Invalid Field Value", "A value in the format array was an empty string.", dataset_name)
-                    else:
-                        check_mime_type(s, "format", dataset_name, errs)
+            if item.get("accessURL") is None:
+                if item.get("format") != None:
+                    add_error(errs, 50, "Invalid Field Value", "Datasets without an 'accessURL' should not have a 'format'.", dataset_name)
+            elif check_string_field(item, "format", -1, dataset_name, errs):
+                check_mime_type(item.get("format"), "format", dataset_name, errs)
                             
             # license
             if item.get("license") is None:

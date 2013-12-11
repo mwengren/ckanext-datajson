@@ -11,7 +11,7 @@ def get_facet_fields():
     facets["SubjectArea1"] = "Subjects" # search facets remove spaces from field names
     return facets
 
-def make_datajson_entry(package):
+def make_datajson_entry(package, plugin):
     return OrderedDict([
         ("title", package["title"]),
         ("description", package["notes"]),
@@ -20,15 +20,15 @@ def make_datajson_entry(package):
         ("publisher", package["author"]),
         ("bureauCode", extra(package, "Bureau Code").split(" ") if extra(package, "Bureau Code") else None),
         ("programCode", extra(package, "Program Code").split(" ") if extra(package, "Program Code") else None),
-        ("contactPoint", extra(package, "Contact Name")),
-        ("mbox", extra(package, "Contact Email")),
+        ("contactPoint", extra(package, "Contact Name", default=plugin.default_contactpoint)),
+        ("mbox", extra(package, "Contact Email", default=plugin.default_mbox)),
         ("identifier", package["id"]),
         ("accessLevel", extra(package, "Access Level", default="public")),
         ("accessLevelComment", extra(package, "Access Level Comment")),
         ("dataDictionary", extra(package, "Data Dictionary")),
         ("accessURL", get_primary_resource(package).get("url", None)),
         ("webService", get_api_resource(package).get("url", None)),
-        ("format", [ extension_to_mime_type(get_primary_resource(package).get("format", None)) ]),
+        ("format", extension_to_mime_type(get_primary_resource(package).get("format", None)) ),
         ("license", extra(package, "License Agreement")),
         ("spatial", extra(package, "Geographic Scope")),
         ("temporal", build_temporal(package)),
@@ -76,6 +76,14 @@ def get_best_resource(package, acceptable_formats, unacceptable_formats=None):
 
 def get_primary_resource(package):
     # Return info about a "primary" resource. Select a good one.
+
+    # If this came from a harvested data.json file, we marked the resource
+    # that came from the top-level accessURL as 'is_primary_distribution'.
+    for r in package["resources"]:
+        if r.get("is_primary_distribution") == 'true':
+            return r
+
+    # Otherwise fall back to a resource by prefering certain formats over others.
     return get_best_resource(package, ("csv", "xls", "xml", "text", "zip", "rdf"), ("api", "query tool", "widget"))
     
 def get_api_resource(package):
