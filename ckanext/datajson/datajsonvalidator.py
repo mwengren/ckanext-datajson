@@ -2,7 +2,7 @@ import re
 
 # from the iso8601 package, plus ^ and $ on the edges
 ISO8601_REGEX = re.compile(r"^([0-9]{4})(-([0-9]{1,2})(-([0-9]{1,2})"
-    r"((.)([0-9]{2}):([0-9]{2})(:([0-9]{2})(\.([0-9]+))?)?"
+    r"((T)([0-9]{2}):([0-9]{2})(:([0-9]{2})(\.([0-9]+))?)?"
     r"(Z|(([-+])([0-9]{2}):([0-9]{2})))?)?)?)?$")
 
 URL_REGEX = re.compile(
@@ -17,7 +17,7 @@ ACCRUAL_PERIODICITY_VALUES = ("Annual", "Bimonthly", "Semiweekly", "Daily", "Biw
 LANGUAGE_REGEX = re.compile("^[A-Za-z]{2}([A-Za-z]{2})?$")
 
 COMMON_MIMETYPES = ("application/zip", "application/vnd.ms-excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/csv", "application/xml", "application/rdf+xml", "application/json", "text/plain", "application/rss+xml")
-MIMETYPE_REGEX = re.compile("^(application|text)/([a-z\-\.\+]+)$")
+MIMETYPE_REGEX = re.compile("^(application|text)/([a-z\-\.\+]+)(;.*)?$")
 
 # load the OMB bureau codes on first load of this module
 import urllib, csv
@@ -43,6 +43,14 @@ def do_validation(doc, src_url, errors_array):
             dataset_name = "dataset %d" % (i+1)
             if check_string_field(item, "title", 5, dataset_name, errs):
                 dataset_name = '"%s"' % item.get("title", "").strip()
+
+            # No fields should be null or an empty list, according to GSA. After this point we treat nulls as if they were
+            # not present. This check must be after dataset_name is set above.
+            for k, v in item.items():
+                if v is None:
+                    add_error(errs, 2, "File Format Issues", "The '%s' field is set to 'null'. If there is no value, the field must not be present." % k, dataset_name)
+                if isinstance(v, list) and len(v) == 0:
+                    add_error(errs, 2, "File Format Issues", "The '%s' field is an empty list. If there is no value, the field must not be present." % k, dataset_name)
                 
             # description
             check_string_field(item, "description", 30, dataset_name, errs)
@@ -59,7 +67,9 @@ def do_validation(doc, src_url, errors_array):
                         add_error(errs, 5, "Invalid Required Field Value", "A keyword in the keyword array was an empty string.", dataset_name)
                     
             # bureauCode
-            if check_required_field(item, "bureauCode", list, dataset_name, errs):
+            # (skip if this is known to not be a federal dataset)
+            if item.get("_is_federal_dataset", True) == True and \
+               check_required_field(item, "bureauCode", list, dataset_name, errs):
                 for bc in item["bureauCode"]:
                     if not isinstance(bc, (str, unicode)):
                         add_error(errs, 5, "Invalid Required Field Value", "Each bureauCode must be a string", dataset_name)
@@ -91,7 +101,8 @@ def do_validation(doc, src_url, errors_array):
                 seen_identifiers.add(item["identifier"])
                 
             # programCode
-            if check_required_field(item, "programCode", list, dataset_name, errs):
+            # (don't bother reporting a missing programCode if no bureauCode is set)
+            if isinstance(item.get("bureauCode"), list) and check_required_field(item, "programCode", list, dataset_name, errs):
                 for s in item["programCode"]:
                     if not isinstance(s, (str, unicode)):
                         add_error(errs, 5, "Invalid Required Field Value", "Each value in the programCode array must be a string", dataset_name)
@@ -158,8 +169,10 @@ def do_validation(doc, src_url, errors_array):
                 add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'temporal' must be two dates separated by a forward slash.", dataset_name)
             else:
                 d1, d2 = item["temporal"].split("/", 1)
-                if not ISO8601_REGEX.match(d1) or not ISO8601_REGEX.match(d2):
-                    add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'temporal' has an invalid start or end date.", dataset_name)
+                if not ISO8601_REGEX.match(d1):
+                    add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'temporal' has an invalid start date: %s." % d1, dataset_name)
+                if not ISO8601_REGEX.match(d2):
+                    add_error(errs, 50, "Invalid Field Value (Optional Fields)", "The field 'temporal' has an invalid end date: %s." % d2, dataset_name)
             
             # Expanded Fields
             
@@ -327,6 +340,7 @@ def check_mime_type(format, field_name, dataset_name, errs):
         add_error(errs, 5, "Update Your File!", "The '%s' field used to be a file extension but now it must be a MIME type." % field_name, dataset_name)
     elif not MIMETYPE_REGEX.match(format):
         add_error(errs, 5, "Invalid Required Field Value", "The '%s' field has an invalid MIME type: \"%s\"." % (field_name, format), dataset_name)
-    elif format not in COMMON_MIMETYPES:
+    elif format.split(";")[0] not in COMMON_MIMETYPES:
+        # if there's an optional parameter like "; charset=UTF-8" chop it off before checking the COMMON_MIMETYPES list
         add_error(errs, 100, "Are These Okay?", "The '%s' field has an unusual MIME type: \"%s\"" % (field_name, format), dataset_name)
         

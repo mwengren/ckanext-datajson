@@ -10,7 +10,7 @@ from ckanext.harvest.model import HarvestJob, HarvestObject, HarvestGatherError,
                                     HarvestObjectError
 from ckanext.harvest.harvesters.base import HarvesterBase
 
-import uuid, datetime, hashlib, urllib2, json, yaml, json, os
+import uuid, datetime, hashlib, urllib2, json, yaml, json, os, re
 
 from jsonschema.validators import Draft4Validator
 
@@ -43,27 +43,13 @@ class DatasetHarvesterBase(HarvesterBase):
         # string. Unfortunately I went ahead of CKAN on this. The stock CKAN harvester
         # only allows JSON in the configuration box. My fork is necessary for this
         # to work: https://github.com/joshdata/ckanext-harvest
+        ret = yaml.load(harvest_source.config)
+        if not isinstance(ret, dict): ret = { }
 
-        ret = {
-            "filters": { }, # map data.json field name to list of values one of which must be present
-            "defaults": { }, # map field name to value to supply as default if none exists, handled by the actual importer module, so the field names may be arbitrary
-        }
-
-        source_config = yaml.load(harvest_source.config)
-
-        try:
-            ret["filters"].update(source_config["filters"])
-        except TypeError:
-            pass
-        except KeyError:
-            pass
-
-        try:
-            ret["defaults"].update(source_config["defaults"])
-        except TypeError:
-            pass
-        except KeyError:
-            pass
+        # ensure that some expected keys are present and have dictionary values
+        for key in ("filters", "excludes", "defaults", "overrides"):
+            if not isinstance(ret.get(key), dict):
+                ret[key] = { }
 
         return ret
 
@@ -119,7 +105,7 @@ class DatasetHarvesterBase(HarvesterBase):
         object_ids = []
         seen_datasets = set()
         
-        filters = self.load_config(harvest_job.source)["filters"]
+        config = self.load_config(harvest_job.source)
 
         for dataset in source:
             # Create a new HarvestObject for this dataset and save the
@@ -129,12 +115,31 @@ class DatasetHarvesterBase(HarvesterBase):
             # For each filter, check that the value specified in the data.json file
             # is among the permitted values in the filter specification.
             matched_filters = True
-            for k, v in filters.items():
+            for k, v in config["filters"].items():
                 if dataset.get(k) not in v:
                     matched_filters = False
             if not matched_filters:
                 continue
 
+            # Check the config's excludes to see if we should NOT import this dataset.
+            matched_excludes = False
+            for k, v in config["excludes"].items():
+                # See if the value appears exactly in the list.
+                value = dataset.get(k)
+                if value in v:
+                    matched_excludes = True
+
+                # For any regex in the list, see if the regex matches. Specify regexes
+                # by surrounding them in forward slashes, e.g. "/mypattern/". Must turn
+                # the value into a string though,
+                value = unicode(value)
+                for pattern in v:
+                    if not re.match("^/.*/$", pattern): continue
+                    pattern = pattern[1:-1] # strip slashes
+                    if re.search(pattern, value):
+                        matched_excludes = True
+            if matched_excludes:
+                continue
             
             # Get the package_id of this resource if we've already imported
             # it into our system. Otherwise, assign a brand new GUID to the
@@ -181,9 +186,9 @@ class DatasetHarvesterBase(HarvesterBase):
         return True
 
     # SUBCLASSES MUST IMPLEMENT
-    def set_dataset_info(self, pkg, dataset, dataset_defaults):
+    def set_dataset_info(self, pkg, dataset, harvester_config):
         # Sets package metadata on 'pkg' using the remote catalog's metadata
-        # in 'dataset' and default values as configured in 'dataset_defaults'.
+        # in 'dataset' and default values as configured in 'harvester_config'.
         raise Exception("Not implemented.")
 
     # validate dataset against POD schema
@@ -210,7 +215,7 @@ class DatasetHarvesterBase(HarvesterBase):
         log.debug('In %s import_stage' % repr(self))
         
         # Get default values.
-        dataset_defaults = self.load_config(harvest_object.source)["defaults"]
+        harvester_config = self.load_config(harvest_object.source)
 
         # Get the metadata that we stored in the HarvestObject's content field.
         dataset = json.loads(harvest_object.content)
@@ -307,8 +312,18 @@ class DatasetHarvesterBase(HarvesterBase):
                 value = dataset.get(key, "")
                 if value is not None: extras.append({"key": key, "value": value})
 
+        # Set default values from the harvester configuration. Do this before
+        # applying values from the harvest source so that the values can be
+        # overridden.
+        #HHS:
+        #self.set_extras(pkg, harvester_config["defaults"])
+
         # Set specific information about the dataset.
-        self.set_dataset_info(pkg, dataset, dataset_defaults)
+        self.set_dataset_info(pkg, dataset, harvester_config)
+
+        # Set "overrides" values from the harvester configuration, overriding
+        # anything found in the harvester source.
+        self.set_extras(pkg, harvester_config["overrides"])
     
         # Try to update an existing package with the ID set in harvest_object.guid. If that GUID
         # corresponds with an existing package, get its current metadata.
@@ -362,7 +377,7 @@ class DatasetHarvesterBase(HarvesterBase):
         
     def make_upstream_content_hash(self, datasetdict, harvest_source):
         return hashlib.sha1(json.dumps(datasetdict, sort_keys=True)
-            + "|" + harvest_source.config + "|" + self.HARVESTER_VERSION).hexdigest()
+            + "|" + harvest_source.config.encode("utf8") + "|" + self.HARVESTER_VERSION).hexdigest()
         
     def find_extra(self, pkg, key):
         for extra in pkg["extras"]:
@@ -405,3 +420,29 @@ class DatasetHarvesterBase(HarvesterBase):
         # Append some random text to the URL. Hope that with five character
         # there will be no collsion.
         return name + "-" + str(uuid.uuid4())[:5]
+
+    def set_extras(self, package, extras):
+        for k, v in extras.items():
+            if k in ("title", "notes", "author", "url"):
+                # these are CKAN package fields
+                package[k] = v
+            elif k == "tags":
+                # tags are special
+                package["tags"] = [ { "name": munge_title_to_name(t) } for t in v ]
+            else:
+                # everything else is an "extra"
+                DatasetHarvesterBase.set_extra(package, k, v)
+
+    @staticmethod
+    def set_extra(package, key, value):
+        if value is None: raise ValueError("value cannot be None")
+
+        if isinstance(value, list): value = " ".join(value) # for bureauCode, programCode, references
+        if value in (True, False): value = str(value).lower() # for dataQuality which is a boolean field, turn into "true" and "false"
+ 
+        extras = package.setdefault("extras", [])
+        for extra in extras:
+            if extra.get("key") == key:
+                extra["value"] = value
+                return
+        extras.append({ "key": key, "value": value })

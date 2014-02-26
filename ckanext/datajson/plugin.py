@@ -41,6 +41,7 @@ class DataJsonPlugin(p.SingletonPlugin):
         DataJsonPlugin.site_url = config.get("ckan.site_url")
         DataJsonPlugin.default_contactpoint = config.get("ckanext.datajson.default_contactpoint")
         DataJsonPlugin.default_mbox = config.get("ckanext.datajson.default_mbox")
+        DataJsonPlugin.default_keywords = config.get("ckanext.datajson.default_keywords")
 
         # Adds our local templates directory. It's smart. It knows it's
         # relative to the path of *this* file. Wow.
@@ -139,6 +140,7 @@ class DataJsonController(BaseController):
         # Validates that a URL is a good data.json file.
         if request.method == "POST" and "url" in request.POST and request.POST["url"].strip() != "":
             c.source_url = request.POST["url"]
+            c.number_of_records = None
             c.errors = []
             
             import urllib, json
@@ -156,6 +158,8 @@ class DataJsonController(BaseController):
             if body:
                 try:
                     do_validation(body, c.source_url, c.errors)
+                    if type(body) == list:
+                        c.number_of_records = len(body)
                 except Exception as e:
                     c.errors.append(("Internal Error", ["Something bad happened: " + unicode(e)]))
                 if len(c.errors) == 0:

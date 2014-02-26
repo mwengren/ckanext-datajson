@@ -1,4 +1,5 @@
-from logging import getLogger
+import re
+
 try:
     from collections import OrderedDict # 2.7
 except ImportError:
@@ -22,23 +23,27 @@ def get_facet_fields():
 
 
 def make_datajson_entry(package, plugin):
+    # keywords
+    keywords = [t["display_name"] for t in package["tags"]]
+    if len(keywords) == 0 and plugin.default_keywords is not None:
+        keywords = re.split("\s*,\s*", plugin.default_keywords)
 
-    return OrderedDict([
+    # form the return value as an ordered list of fields which is nice for doing diffs of output
+    ret = [
         ("title", package["title"]),
         ("description", package["notes"]),
-        #("keyword", [t["display_name"] for t in package["tags"]]),
-        #("keyword", [t for t in package["extras"]["tags"].split(",")]),
-        ("keyword", tags(package)),
-        #("modified", extra(package, "Date Updated")),
-        ("modified", extra(package, "Metadata Date")),
+        ("keyword", keywords),
+        ("modified", extra(package, "Date Updated", datatype="iso8601", default=extra(package, "Date Released", datatype="iso8601"))),
         #("publisher", package["author"]),
         #("publisher", json.loads(extra(package, "responsible-party")[0]).get("name")),
         #("publisher", extra(package, "responsible-party")),
         #("publisher", type(extra(package, "responsible-party"))),
         #("publisher", json.loads(extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")).get("name")),
         #("publisher", extra(package, "responsible-party").replace("\\", "").replace("\[", "").replace("\]", "")),
+        #HHS:
+        #("publisher", package["author"]),
         ("publisher", get_responsible_party(extra(package, "Responsible Party"))),
-        
+        #HHS
         #("bureauCode", extra(package, "Bureau Code").split(" ") if extra(package, "Bureau Code") else None),
         ("bureauCode", bureau_code(package)),
         ("programCode", extra(package, "Program Code").split(" ") if extra(package, "Program Code") else None),
@@ -61,14 +66,17 @@ def make_datajson_entry(package, plugin):
         ("license", extra(package, "Licence")),
         ("spatial", extra(package, "Spatial")),
         ("temporal", build_temporal(package)),
+        #HHS:
+        #("issued", extra(package, "Date Released", datatype="iso8601")),
         ("issued", get_reference_date(extra(package, "Dataset Reference Date"))),
+        #HHS:
+        #("accrualPeriodicity", extra(package, "Publish Frequency")),
         ("accrualPeriodicity", extra(package, "Frequency Of Update")),
         ("language", extra(package, "Language")),
         ("PrimaryITInvestmentUII", extra(package, "PrimaryITInvestmentUII")),
-        ("granularity", "/".join(x for x in [extra(package, "Unit of Analysis"), extra(package, "Geographic Granularity")] if x != None)),
         ("dataQuality", extra(package, "Data Quality Met", default="true") == "true"),
         ("theme", [s for s in (extra(package, "Subject Area 1"), extra(package, "Subject Area 2"), extra(package, "Subject Area 3")) if s != None]),
-        ("references", [s for s in [extra(package, "Technical Documentation")] if s != None]),
+        ("references", [s for s in extra(package, "Technical Documentation", default="").split(" ") if s != ""]),
         ("landingPage", package["url"]),
         ("systemOfRecords", extra(package, "System Of Records")),
         ("distribution",
@@ -81,9 +89,20 @@ def make_datajson_entry(package, plugin):
                 for r in package["resources"]
                 if r["format"].lower() not in ("api", "query tool", "widget")
             ]),
-    ])
+    ]
+
+    # Special case to help validation.
+    if extra(package, "Catalog Type") == "State Catalog":
+        ret.append( ("_is_federal_dataset", False) )
+
+    # GSA doesn't like null values and empty lists so remove those now.
+    ret = [(k, v) for (k, v) in ret if v is not None and (not isinstance(v, list) or len(v) > 0)]
+
+    # And return it as an OrderedDict because we need dict output in JSON
+    # and we want to have the output be stable which is helpful for debugging (e.g. with diff).
+    return OrderedDict(ret)
     
-def extra(package, key, default=None):
+def extra(package, key, default=None, datatype=None, raise_if_missing=False):
     # Retrieves the value of an extras field.
     '''
     for extra in package["extras"]:
@@ -123,9 +142,18 @@ def extra(package, key, default=None):
 def tags(package, default=None):
     # Retrieves the value of an extras field.
     for extra in package["extras"]:
-        if extra["key"] == "tags":
-            keywords = extra["value"].split(",")
-            return keywords
+        if extra["key"] == key:
+            v = extra["value"]
+
+            if datatype == "iso8601":
+                # Hack: If this value is a date, convert Drupal style dates to ISO 8601
+                # dates by replacing the space date/time separator with a T. Also if it
+                # looks like a plain date (midnight time), remove the time component.
+                v = v.replace(" ", "T")
+                v = v.replace("T00:00:00", "")
+
+            return v
+    if raise_if_missing: raise ValueError("Missing value for %s.", key)
 
 def bureau_code(package, default=None):
     file = open(os.path.join(os.path.dirname(__file__),"resources") + "/omb-agency-bureau-treasury-codes.json", 'r');
@@ -167,10 +195,21 @@ def get_primary_resource(package):
     
 def get_api_resource(package):
     # Return info about an API resource.
-    return get_best_resource(package, ("api", "query tool"))
+    return get_best_resource(package, ("api",))
 
 def build_temporal(package):
     # Build one dataset entry of the data.json file.
+    #HHS:
+    #try:
+    #    # we ask extra() to raise if either the start or end date is missing since we can't
+    #    # form a valid value in that case
+    #    return \
+    #          extra(package, "Coverage Period Start", datatype="iso8601", raise_if_missing=True) \
+    #        + "/" \
+    #        + extra(package, "Coverage Period End", datatype="iso8601", raise_if_missing=True)
+    #except ValueError:
+    #    return None
+    
     temporal = ""
     if extra(package, "Temporal Extent Begin"):
         temporal = extra(package, "Temporal Extent Begin").replace(" ", "T").replace("T00:00:00", "")
@@ -183,6 +222,7 @@ def build_temporal(package):
         temporal += extra(package, "Coverage Period End", "Unknown").replace(" ", "T").replace("T00:00:00", "")
     if temporal == "Unknown/Unknown": return None
     return temporal
+
 
 def extension_to_mime_type(file_ext):
     if file_ext is None: return None

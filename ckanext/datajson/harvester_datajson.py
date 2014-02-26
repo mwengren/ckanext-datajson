@@ -7,7 +7,7 @@ class DataJsonHarvester(DatasetHarvesterBase):
     A Harvester for /data.json files.
     '''
 
-    HARVESTER_VERSION = "0.9am" # increment to force an update even if nothing has changed
+    HARVESTER_VERSION = "0.9ap" # increment to force an update even if nothing has changed
 
     def info(self):
         return {
@@ -18,7 +18,7 @@ class DataJsonHarvester(DatasetHarvesterBase):
 
     def load_remote_catalog(self, harvest_job):
         try:
-            datasets = json.load(urllib2.urlopen(harvest_job.source.url))
+            datasets = json.load(urllib2.urlopen(harvest_job.source.url, None, 90))
         except:
             # try different encode
             try:
@@ -39,9 +39,9 @@ class DataJsonHarvester(DatasetHarvesterBase):
 
         return datasets
         
-    def set_dataset_info(self, pkg, dataset, dataset_defaults):
+    def set_dataset_info(self, pkg, dataset, harvester_config):
         from parse_datajson import parse_datajson_entry
-        parse_datajson_entry(dataset, pkg, dataset_defaults)
+        parse_datajson_entry(dataset, pkg, harvester_config)
 
 # helper function to remove BOM
 def lstrip_bom(str_):
