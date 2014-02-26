@@ -2,9 +2,19 @@ from ckan.lib.munge import munge_title_to_name
 
 import re
 
-def parse_datajson_entry(datajson, package, defaults):
-	package["title"] = datajson.get("title", defaults.get("Title"))
-	package["notes"] = datajson.get("description", defaults.get("Notes"))
+from ckanext.datajson.harvester_base import DatasetHarvesterBase
+
+def parse_datajson_entry(datajson, package, harvester_config):
+	# Notes:
+	# * the data.json field "identifier" is handled by the harvester
+
+	package["title"] = datajson.get("title", package.get("title"))
+	package["notes"] = datajson.get("description", package.get("notes"))
+	package["author"] = datajson.get("publisher", package.get("author"))
+	package["url"] = datajson.get("landingPage", datajson.get("webService", datajson.get("accessURL", package.get("url"))))
+
+	package["groups"] = [ { "name": g } for g in 
+		harvester_config["defaults"].get("Groups", [])] # the complexity of permissions makes this useless, CKAN seems to ignore
 
 	# backwards-compatibility for files from Socrata
 	if isinstance(datajson.get("keyword"), str):
@@ -14,50 +24,39 @@ def parse_datajson_entry(datajson, package, defaults):
 	elif isinstance(datajson.get("keyword"), list):
 		package["tags"] = [ { "name": munge_title_to_name(t) } for t in
 			datajson.get("keyword") if t.strip() != ""]
-	# field is not provided, use defaults specified in harvester config
-	elif isinstance(defaults.get("Tags"), list):
-		package["tags"] = [ { "name": t } for t in defaults.get("Tags")]
 
-	package["groups"] = [ { "name": g } for g in 
-		defaults.get("Groups", [])] # the complexity of permissions makes this useless, CKAN seems to ignore
-	package["organization"] = datajson.get("organization", defaults.get("Organization"))
-	extra(package, "Group Name", defaults.get("Group Name")) # i.e. dataset grouping string
-	extra(package, "Date Updated", datajson.get("modified"))
-	extra(package, "Agency", defaults.get("Agency")) # i.e. federal department: not in data.json spec but required by the HHS metadata schema
-	package["author"] = datajson.get("publisher", defaults.get("Author")) # i.e. agency within HHS
-	extra(package, "author_id", defaults.get("author_id")) # i.e. URI for agency: not in data.json spec but in HHS metadata schema
-	extra(package, "Bureau Code", " ".join(datajson.get("bureauCode", defaults.get("Bureau Code", []))))
-	extra(package, "Program Code", " ".join(datajson.get("programCode", defaults.get("Program Code", []))))
-	extra(package, "Agency Program URL", defaults.get("Agency Program URL")) # i.e. URL for agency program
-	extra(package, "Contact Name", datajson.get("contactPoint", defaults.get("Contact Name"))) # not in HHS schema
-	extra(package, "Contact Email", datajson.get("mbox", defaults.get("Contact Email"))) # not in HHS schema
-	# "identifier" is handled by the harvester
-	extra(package, "Access Level", datajson.get("accessLevel")) # not in HHS schema
-	extra(package, "Access Level Comment", datajson.get("accessLevelComment")) # not in HHS schema
-	extra(package, "Data Dictionary", datajson.get("dataDictionary", defaults.get("Data Dictionary")))
+	extra(package, "Group Name", datajson, "__not__in_pod__schema") # i.e. dataset grouping string from HHS schema
+	extra(package, "Date Updated", datajson, "modified")
+	extra(package, "Agency", datajson, "__not__in_pod__schema") # i.e. federal department: not in data.json spec but required by the HHS metadata schema
+	extra(package, "author_id", datajson, "__not__in_pod__schema") # i.e. URI for agency: not in data.json spec but in HHS metadata schema
+	extra(package, "Bureau Code", datajson, "bureauCode")
+	extra(package, "Program Code", datajson, "programCode")
+	extra(package, "Agency Program URL", datajson, "__not__in_pod__schema") # i.e. URL for agency program
+	extra(package, "Contact Name", datajson, "contactPoint") # not in HHS schema
+	extra(package, "Contact Email", datajson, "mbox") # not in HHS schema
+	extra(package, "Access Level", datajson, "accessLevel") # not in HHS schema
+	extra(package, "Access Level Comment", datajson, "accessLevelComment") # not in HHS schema
+	extra(package, "Data Dictionary", datajson, "dataDictionary")
 	# accessURL is handled with the distributions below
 	# webService is handled with the distributions below
-	extra(package, "Format", datajson.get("format")) # not in HHS schema
-	extra(package, "License Agreement", datajson.get("license"))
-	#extra(package, "License Agreement Required", ...)
-	extra(package, "Geographic Scope", datajson.get("spatial"))
-	extra(package, "Temporal", datajson.get("temporal")) # HHS uses Coverage Period (FY) Start/End
-	extra(package, "Date Released", datajson.get("issued"))
-	#extra(package, "Collection Frequency", ...) # in HHS schema but not in POD schema
-	extra(package, "Publish Frequency", datajson.get("accrualPeriodicity")) # not in HHS schema but in POD schema
-	extra(package, "Language", datajson.get("language")) # not in HHS schema
-	extra(package, "Granularity", datajson.get("granularity")) # not in HHS schema
-	extra(package, "Data Quality Met", { True: "true", False: "false" }.get(datajson.get("dataQuality"))) # not in HHS schema
-	#extra(package, "Unit of Analysis", ...)
-	#extra(package, "Collection Instrument", ...)
-	extra(package, "Subject Area 1", datajson.get("theme", defaults.get("Subject Area 1")))
-	extra(package, "Subject Area 2", defaults.get("Subject Area 2"))
-	extra(package, "Subject Area 2", defaults.get("Subject Area 3"))
-	extra(package, "Technical Documentation", datajson.get("references"))
-	extra(package, "Size", datajson.get("size")) # not in HHS schema
-	package["url"] = datajson.get("landingPage", datajson.get("webService", datajson.get("accessURL")))
-	extra(package, "PrimaryITInvestmentUII", datajson.get("PrimaryITInvestmentUII")) # not in HHS schema
-	extra(package, "System Of Records", datajson.get("systemOfRecords")) # not in HHS schema
+	extra(package, "Format", datajson, "format") # not in HHS schema
+	extra(package, "License Agreement", datajson, "license")
+	extra(package, "Geographic Scope", datajson, "spatial")
+	extra(package, "Temporal", datajson, "temporal") # HHS uses Coverage Period (FY) Start/End
+	extra(package, "Date Released", datajson, "issued")
+	extra(package, "Publish Frequency", datajson, "accrualPeriodicity") # not in HHS schema but in POD schema
+	extra(package, "Language", datajson, "language") # not in HHS schema
+	extra(package, "Granularity", datajson, "granularity") # not in HHS schema
+	extra(package, "Data Quality Met", datajson, "dataQuality") # not in HHS schema
+	extra(package, "Subject Area 1", datajson, "theme")
+	extra(package, "Subject Area 2", datajson, "__not__in_pod__schema")
+	extra(package, "Subject Area 2", datajson, "__not__in_pod__schema")
+	extra(package, "Technical Documentation", datajson, "references")
+	extra(package, "PrimaryITInvestmentUII", datajson, "PrimaryITInvestmentUII") # not in HHS schema
+	extra(package, "System Of Records", datajson, "systemOfRecords") # not in HHS schema
+
+	# In HHS schema but not in POD schema:
+	# License Agreement Required, Collection Frequency, Unit of Analysis, Collection Instrument
 
 	# Add resources.
 
@@ -120,9 +119,10 @@ def parse_datajson_entry(datajson, package, defaults):
 		for d in datajson.get("distribution"):
 			add_resource(d.get("accessURL"), d.get("format"), socrata_formats=d.get("formats"), is_primary=(d.get("accessURL")==datajson.get("accessURL")))
 	
-def extra(package, key, value):
+def extra(package, ckan_key, datajson, datajson_fieldname):
+	value = datajson.get(datajson_fieldname)
 	if not value: return
-	package.setdefault("extras", []).append({ "key": key, "value": value })
+	DatasetHarvesterBase.set_extra(package, ckan_key, value)
 	
 def normalize_format(format, raise_on_unknown=False):
 	# Format should be a file extension. But sometimes Socrata outputs a MIME type.
