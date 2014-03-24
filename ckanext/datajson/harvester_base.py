@@ -12,7 +12,7 @@ from ckanext.harvest.harvesters.base import HarvesterBase
 
 import uuid, datetime, hashlib, urllib2, json, yaml, json, os
 
-from jsonschema.validators import Draft4Validator
+#from jsonschema.validators import Draft4Validator
 
 import logging
 log = logging.getLogger("harvester")
