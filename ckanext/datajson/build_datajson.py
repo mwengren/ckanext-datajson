@@ -90,7 +90,7 @@ def make_datajson_entry(package,plugin):
           landingPage = strip_if_string(extra(package,"Homepage URL"))
           license = strip_if_string(extra(package,"License"))
           referencedate = json.loads(extra(package,"Dataset Reference Date"))
-          if referencedate : modified = referencedate[0]['value']
+          modified = referencedate[0]['value'] if referencedate else None
           if not modified:
               modified =  clean_date(extra(package, "Last Update"))
           if not modified:
