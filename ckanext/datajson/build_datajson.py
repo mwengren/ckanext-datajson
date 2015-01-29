@@ -91,8 +91,9 @@ def make_datajson_entry(package,plugin):
         license = strip_if_string(extra(package,"License"))
         referencedate = json.loads(extra(package,"Dataset Reference Date"))
         if referencedate and isinstance(referencedate, list):
-            for i in referencedate:
-                modified = referencedate[i]['value'] if referencedate[i]['type'] == "revision" else None
+            for date_type in ["revision","publication"]:
+                for ref in referencedate:
+                    modified = ref['value'] if ref['type'] == date_type else None
             if not modified:
                 modified = referencedate[0]['value']
         if not modified:
