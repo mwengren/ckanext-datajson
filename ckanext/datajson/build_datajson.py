@@ -89,6 +89,7 @@ def make_datajson_entry(package,plugin):
         keyword =  tags(package)
         landingPage = strip_if_string(extra(package,"Homepage URL"))
         license = strip_if_string(extra(package,"License"))
+        modified = None
         referencedate = json.loads(extra(package,"Dataset Reference Date"))
         if referencedate and isinstance(referencedate, list):
             for date_type in ["revision","publication"]:
